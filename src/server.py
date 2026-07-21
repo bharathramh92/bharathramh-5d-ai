@@ -2,6 +2,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
+
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -32,14 +33,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global in-memory cache of latest report
-LATEST_REPORT: Dict[str, Any] = {}
-
 class AnalyzeRequest(BaseModel):
     target_dir: Optional[str] = None
+    session_id: Optional[str] = "default"
 
 class ChatRequest(BaseModel):
     question: str
+    session_id: Optional[str] = "default"
     report_context: Optional[Dict[str, Any]] = None
 
 @app.get("/api/status")
@@ -53,33 +53,40 @@ def status():
 
 @app.post("/api/analyze")
 def analyze(req: AnalyzeRequest):
-    global LATEST_REPORT
     target_dir = req.target_dir or str(Path(__file__).resolve().parent.parent)
     
     if not os.path.exists(target_dir):
         raise HTTPException(status_code=400, detail=f"Directory '{target_dir}' does not exist.")
 
     try:
-        agent_system = MultiAgentCodeArchSystem()
+        agent_system = MultiAgentCodeArchSystem(session_id=req.session_id or "default")
         report = agent_system.run_full_analysis(target_dir)
-        LATEST_REPORT = report
         return JSONResponse(content=report)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    global LATEST_REPORT
-    report = req.report_context or LATEST_REPORT
-    if not report:
-        raise HTTPException(status_code=400, detail="No active analysis report context found. Run an analysis first.")
-
     try:
-        agent_system = MultiAgentCodeArchSystem()
-        answer = agent_system.answer_architecture_question(req.question, report)
+        agent_system = MultiAgentCodeArchSystem(session_id=req.session_id or "default")
+        answer = agent_system.answer_architecture_question(req.question, req.report_context)
         return {"answer": answer}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/telemetry")
+def get_telemetry():
+    agent_system = MultiAgentCodeArchSystem()
+    return agent_system.telemetry.get_trace_summary()
+
+@app.get("/api/memory")
+def get_memory(session_id: str = "default"):
+    agent_system = MultiAgentCodeArchSystem(session_id=session_id)
+    return {
+        "session_id": session_id,
+        "history": agent_system.memory.get_history(session_id),
+        "latest_report": agent_system.memory.get_latest_report(session_id)
+    }
 
 # Mount static directory for frontend UI
 static_dir = Path(__file__).resolve().parent / "static"
