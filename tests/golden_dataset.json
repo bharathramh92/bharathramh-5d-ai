@@ -1,0 +1,26 @@
+[
+  {
+    "id": "case_001_empty_python",
+    "files": {
+      "main.py": "print('hello world')"
+    },
+    "expected_files_count": 1,
+    "expected_loc": 1,
+    "expected_security_rating": "Strong"
+  },
+  {
+    "id": "case_002_api_routes",
+    "files": {
+      "server.py": "@app.get('/api/users')\ndef get_users(): pass"
+    },
+    "expected_routes_count": 1,
+    "expected_endpoint": "/api/users"
+  },
+  {
+    "id": "case_003_secret_leak",
+    "files": {
+      "config.py": "API_KEY = 'secret12345678'"
+    },
+    "expected_security_findings_count": 1
+  }
+]

@@ -1,68 +1,102 @@
+import sqlite3
 import json
-import os
 import time
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 class SessionMemoryManager:
-    """Persistent Context & Memory Manager for ArchAgent."""
+    """Async-capable SQLite Session & Context Memory Manager for ArchAgent."""
 
-    def __init__(self, storage_dir: Optional[str] = None):
-        self.storage_dir = Path(storage_dir) if storage_dir else Path(__file__).resolve().parent.parent / ".memory"
+    def __init__(self, db_dir: Optional[str] = None):
+        self.storage_dir = Path(db_dir) if db_dir else Path(__file__).resolve().parent.parent / ".memory"
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        self.memory_file = self.storage_dir / "sessions.json"
-        self.sessions: Dict[str, Any] = self._load()
+        self.db_path = self.storage_dir / "sessions.db"
+        self._init_db()
 
-    def _load(self) -> Dict[str, Any]:
-        if self.memory_file.exists():
-            try:
-                with open(self.memory_file, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                return {}
-        return {}
-
-    def _save(self):
-        try:
-            with open(self.memory_file, "w", encoding="utf-8") as f:
-                json.dump(self.sessions, f, indent=2)
-        except Exception:
-            pass
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    created_at REAL,
+                    latest_report TEXT,
+                    context_window_size INTEGER DEFAULT 20
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    role TEXT,
+                    content TEXT,
+                    metadata TEXT,
+                    timestamp REAL,
+                    FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                )
+            """)
+            conn.commit()
 
     def get_or_create_session(self, session_id: str = "default") -> Dict[str, Any]:
-        if session_id not in self.sessions:
-            self.sessions[session_id] = {
-                "created_at": time.time(),
-                "history": [],
-                "latest_report": None,
-                "context_window_size": 20
-            }
-            self._save()
-        return self.sessions[session_id]
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT session_id, created_at, latest_report, context_window_size FROM sessions WHERE session_id = ?", (session_id,))
+            row = cursor.fetchone()
+            if not row:
+                created_at = time.time()
+                cursor.execute("INSERT INTO sessions (session_id, created_at, latest_report, context_window_size) VALUES (?, ?, ?, ?)",
+                               (session_id, created_at, None, 20))
+                conn.commit()
+                return {"session_id": session_id, "created_at": created_at, "latest_report": None, "context_window_size": 20}
+            
+            report = json.loads(row[2]) if row[2] else None
+            return {"session_id": row[0], "created_at": row[1], "latest_report": report, "context_window_size": row[3]}
 
     def add_message(self, session_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None):
-        session = self.get_or_create_session(session_id)
-        msg = {
-            "timestamp": time.time(),
-            "role": role,
-            "content": content,
-            "metadata": metadata or {}
-        }
-        session["history"].append(msg)
-        # Apply sliding context window limit
-        if len(session["history"]) > session.get("context_window_size", 20):
-            session["history"] = session["history"][-session.get("context_window_size", 20):]
-        self._save()
+        self.get_or_create_session(session_id)
+        meta_str = json.dumps(metadata or {})
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "INSERT INTO messages (session_id, role, content, metadata, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (session_id, role, content, meta_str, time.time())
+            )
+            conn.commit()
+
+    async def add_message_async(self, session_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None):
+        await asyncio.to_thread(self.add_message, session_id, role, content, metadata)
 
     def save_report(self, session_id: str, report: Dict[str, Any]):
-        session = self.get_or_create_session(session_id)
-        session["latest_report"] = report
-        self._save()
+        self.get_or_create_session(session_id)
+        report_str = json.dumps(report)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE sessions SET latest_report = ? WHERE session_id = ?", (report_str, session_id))
+            conn.commit()
+
+    async def save_report_async(self, session_id: str, report: Dict[str, Any]):
+        await asyncio.to_thread(self.save_report, session_id, report)
 
     def get_latest_report(self, session_id: str = "default") -> Optional[Dict[str, Any]]:
         session = self.get_or_create_session(session_id)
         return session.get("latest_report")
 
     def get_history(self, session_id: str = "default") -> List[Dict[str, Any]]:
-        session = self.get_or_create_session(session_id)
-        return session.get("history", [])
+        self.get_or_create_session(session_id)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT role, content, metadata, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT 20",
+                (session_id,)
+            )
+            rows = cursor.fetchall()
+            history = []
+            for row in reversed(rows):
+                history.append({
+                    "role": row[0],
+                    "content": row[1],
+                    "metadata": json.loads(row[2]) if row[2] else {},
+                    "timestamp": row[3]
+                })
+            return history
+
+    async def get_history_async(self, session_id: str = "default") -> List[Dict[str, Any]]:
+        return await asyncio.to_thread(self.get_history, session_id)
