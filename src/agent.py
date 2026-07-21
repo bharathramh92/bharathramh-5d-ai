@@ -22,7 +22,7 @@ class MultiAgentCodeArchSystem:
         else:
             self.client = genai.Client()  # Fallback to default auth / ADC if available
 
-        self.model_name = "gemini-2.5-flash"
+        self.model_name = "gemini-3.5-flash"
 
     def run_full_analysis(self, target_dir: str) -> Dict[str, Any]:
         """Orchestrates the multi-agent pipeline across the target repository."""
