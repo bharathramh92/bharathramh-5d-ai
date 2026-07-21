@@ -2,6 +2,8 @@ import os
 import json
 import time
 from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
+
 from google import genai
 from google.genai import types
 
@@ -14,17 +16,40 @@ from src.tools import (
 )
 from src.memory import SessionMemoryManager
 from src.telemetry import TelemetryTracer
+from src.guardrails import GuardrailsPolicyPlugin, HumanInTheLoopHook
+from src.secrets import get_secret
+
+# Pydantic Schemas for Strict Response Validation
+class DiagramsResponse(BaseModel):
+    component_diagram: str = Field(description="Mermaid.js flowchart graph TD")
+    sequence_diagram: str = Field(description="Mermaid.js sequenceDiagram")
+
+class SecurityAuditResponse(BaseModel):
+    overall_rating: str = Field(description="Strong, Moderate, or Needs Attention")
+    key_risks: List[str] = Field(description="List of identified architectural or code security risks")
+    remediation_recommendations: List[str] = Field(description="Actionable steps to strengthen security")
+    summary_markdown: str = Field(description="Markdown formatted security summary")
+
+class DocumentationResponse(BaseModel):
+    adr_document: str = Field(description="Architecture Decision Record 001")
+    onboarding_guide: str = Field(description="Developer onboarding guide")
+    system_spec: str = Field(description="Technical system specification summary")
 
 class MultiAgentCodeArchSystem:
-    """Multi-Agent System for Codebase Architecture & Technical Documentation Synthesis."""
+    """Enterprise Multi-Agent System with Dynamic Model Routing, Output Guardrails, and Guided Error Loops."""
 
     def __init__(self, api_key: Optional[str] = None, session_id: str = "default"):
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+        self.api_key = api_key or get_secret("GEMINI_API_KEY")
         self.session_id = session_id
         self.memory = SessionMemoryManager()
         self.telemetry = TelemetryTracer()
-        self.model_name = "gemini-3.5-flash"
-        
+        self.guardrails = GuardrailsPolicyPlugin()
+        self.hitl_hook = HumanInTheLoopHook()
+
+        # Dynamic Model Routing Strategy
+        self.primary_model = "gemini-3.5-flash"
+        self.fast_model = "gemini-2.5-flash-lite"
+
         if self.api_key:
             try:
                 self.client = genai.Client(api_key=self.api_key)
@@ -69,7 +94,12 @@ class MultiAgentCodeArchSystem:
         documentation = self._run_doc_generator(inspection_context, architecture_diagrams, security_report)
         self.telemetry.end_span(span_doc, "SUCCESS")
 
-        # Unified Output
+        # Apply Guardrails & Sanitization
+        clean_adr = self.guardrails.sanitize_output(documentation.get("adr_document", ""))
+        clean_guide = self.guardrails.sanitize_output(documentation.get("onboarding_guide", ""))
+        documentation["adr_document"] = clean_adr
+        documentation["onboarding_guide"] = clean_guide
+
         report = {
             "target_dir": target_dir,
             "status": "SUCCESS",
@@ -95,9 +125,8 @@ class MultiAgentCodeArchSystem:
         return report
 
     def _run_architecture_modeler(self, context: Dict[str, Any]) -> Dict[str, str]:
-        """Subagent: Synthesizes codebase context into valid Mermaid.js diagrams."""
+        """Subagent: Synthesizes codebase context into valid Mermaid.js diagrams with Pydantic schema validation."""
         if not self.client:
-            # Fallback deterministic rule-based generator for evaluation without API key
             return {
                 "component_diagram": "graph TD\n    Client[Web UI / API Client] --> Server[FastAPI Server]\n    Server --> Agent[Multi-Agent System]\n    Agent --> Scanner[Static Scanner Tool]\n    Agent --> Telemetry[Telemetry & Memory]",
                 "sequence_diagram": "sequenceDiagram\n    Client->>Server: POST /api/analyze\n    Server->>Agent: Orchestrate Subagents\n    Agent-->>Server: Return Architecture Report\n    Server-->>Client: Render Dashboard & Mermaid Diagrams"
@@ -105,37 +134,42 @@ class MultiAgentCodeArchSystem:
 
         prompt = f"""
 You are an expert Enterprise Architecture Modeler Agent.
-Analyze the following codebase inspection metadata and synthesize valid Mermaid.js diagrams:
+Synthesize valid Mermaid.js diagrams based on codebase metadata:
 
-Codebase Summary:
-- Files: {context['directory_structure'].get('total_files')}
-- Languages: {json.dumps(context['directory_structure'].get('language_breakdown'))}
-- Core Files: {json.dumps(context['directory_structure'].get('file_list_sample'))}
-- Dependencies: {json.dumps(context['dependencies'].get('external_libraries'))}
-- API Routes: {json.dumps(context['api_routes'])}
+Files: {json.dumps(context['directory_structure'].get('file_list_sample'))}
+Languages: {json.dumps(context['directory_structure'].get('language_breakdown'))}
+Dependencies: {json.dumps(context['dependencies'].get('external_libraries'))}
+API Routes: {json.dumps(context['api_routes'])}
 
-Your task is to generate 2 clean, syntactically valid Mermaid diagrams in JSON format:
-1. `component_diagram`: Flowchart diagram (graph TD) showing modules, APIs, services, and external libraries.
-2. `sequence_diagram`: Sequence diagram (sequenceDiagram) showing a typical request flow through the system.
-
-Respond strictly in valid JSON format with keys "component_diagram" and "sequence_diagram".
-Do NOT use markdown code fences inside the JSON string values.
+Tasks:
+1. component_diagram: Flowchart (graph TD) showing modules and services.
+2. sequence_diagram: Sequence diagram showing request flow.
 """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            return json.loads(response.text)
-        except Exception:
-            return {
-                "component_diagram": "graph TD\n    Client[Client Browser/API] --> AppServer[Application Server]\n    AppServer --> DB[(Database)]",
-                "sequence_diagram": "sequenceDiagram\n    Client->>AppServer: HTTP Request\n    AppServer->>Client: 200 OK Response"
-            }
+        error_context = ""
+        for attempt in range(2):
+            try:
+                full_prompt = prompt + (f"\nPrevious Attempt Error: {error_context}\nPlease fix and strictly follow schema." if error_context else "")
+                response = self.client.models.generate_content(
+                    model=self.primary_model,
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=DiagramsResponse
+                    )
+                )
+                data = json.loads(response.text)
+                DiagramsResponse(**data)
+                return data
+            except Exception as e:
+                error_context = str(e)
+
+        return {
+            "component_diagram": "graph TD\n    Client[Client Browser/API] --> AppServer[Application Server]\n    AppServer --> DB[(Database)]",
+            "sequence_diagram": "sequenceDiagram\n    Client->>AppServer: HTTP Request\n    AppServer->>Client: 200 OK Response"
+        }
 
     def _run_security_auditor(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Subagent: Evaluates security posture, compliance, and code quality."""
+        """Subagent: Evaluates security posture using Pydantic schema validation."""
         if not self.client:
             sec_count = len(context.get("security_findings", []))
             rating = "Needs Attention" if sec_count > 0 else "Strong"
@@ -151,37 +185,39 @@ Do NOT use markdown code fences inside the JSON string values.
 
         prompt = f"""
 You are an expert Cloud Security & Code Auditor Agent.
-Evaluate the security posture based on the following static scan findings and codebase metadata:
+Evaluate the security posture based on static scan findings:
 
-Static Security Scans: {json.dumps(context['security_findings'])}
+Scans: {json.dumps(context['security_findings'])}
 Dependencies: {json.dumps(context['dependencies'].get('manifest_dependencies'))}
 Metrics: {json.dumps(context['code_metrics'].get('summary'))}
-
-Provide a structured security evaluation containing:
-1. `overall_rating`: "Strong", "Moderate", or "Needs Attention"
-2. `key_risks`: List of top identified risks or architectural vulnerabilities.
-3. `remediation_recommendations`: Actionable steps to strengthen security & compliance.
-4. `summary_markdown`: A concise markdown summary.
-
-Respond strictly in valid JSON format.
 """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            return json.loads(response.text)
-        except Exception:
-            return {
-                "overall_rating": "Moderate",
-                "key_risks": ["Static scan completed with low risk findings."],
-                "remediation_recommendations": ["Enforce environment variable secrets management."],
-                "summary_markdown": "### Security Overview\nNo critical secret leaks detected."
-            }
+        error_context = ""
+        for attempt in range(2):
+            try:
+                full_prompt = prompt + (f"\nPrevious Attempt Error: {error_context}" if error_context else "")
+                response = self.client.models.generate_content(
+                    model=self.fast_model,
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=SecurityAuditResponse
+                    )
+                )
+                data = json.loads(response.text)
+                SecurityAuditResponse(**data)
+                return data
+            except Exception as e:
+                error_context = str(e)
+
+        return {
+            "overall_rating": "Moderate",
+            "key_risks": ["Static scan completed."],
+            "remediation_recommendations": ["Enforce env var secrets."],
+            "summary_markdown": "### Security Overview\nScan completed."
+        }
 
     def _run_doc_generator(self, context: Dict[str, Any], diagrams: Dict[str, str], security: Dict[str, Any]) -> Dict[str, str]:
-        """Subagent: Writes Architecture Decision Records (ADRs) and Developer Onboarding Guide."""
+        """Subagent: Writes ADR 001 and Developer Onboarding Guide with Pydantic schema validation."""
         if not self.client:
             return {
                 "adr_document": "# ADR 001: ArchAgent Multi-Agent Architecture\n\n## Status\nAccepted\n\n## Context\nAutomating technical documentation, static inspection, and architecture visualization using subagent delegation.\n\n## Decision\nUse modular Python agents with static inspection tools, FastAPI backend, and Mermaid.js diagrams.\n\n## Consequences\nHigh maintainability and zero-config evaluation.",
@@ -191,37 +227,39 @@ Respond strictly in valid JSON format.
 
         prompt = f"""
 You are a Principal Software Technical Writer Agent.
-Using the provided codebase context, diagrams, and security findings, generate high quality technical documentation:
+Generate technical documentation based on context:
 
 Files: {json.dumps(context['directory_structure'].get('file_list_sample'))}
 Languages: {json.dumps(context['directory_structure'].get('language_breakdown'))}
 Metrics: {json.dumps(context['code_metrics'].get('summary'))}
-
-Tasks:
-1. `adr_document`: An Architecture Decision Record (ADR 001) explaining the tech stack, component decoupling, and state management.
-2. `onboarding_guide`: A step-by-step Developer Onboarding Guide explaining setup, core abstractions, and development workflow.
-3. `system_spec`: Technical system specification summary.
-
-Respond strictly in valid JSON format with keys "adr_document", "onboarding_guide", and "system_spec".
 """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
-            return json.loads(response.text)
-        except Exception:
-            return {
-                "adr_document": "# ADR 001: Multi-Agent System Architecture\n\n## Status\nAccepted\n\n## Context\nAutomating technical documentation and architecture visualization.",
-                "onboarding_guide": "# Developer Onboarding Guide\n\n1. Install dependencies\n2. Configure GEMINI_API_KEY\n3. Start local server",
-                "system_spec": "Modular Python multi-agent system powered by Gemini 3.5."
-            }
+        error_context = ""
+        for attempt in range(2):
+            try:
+                full_prompt = prompt + (f"\nPrevious Attempt Error: {error_context}" if error_context else "")
+                response = self.client.models.generate_content(
+                    model=self.primary_model,
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=DocumentationResponse
+                    )
+                )
+                data = json.loads(response.text)
+                DocumentationResponse(**data)
+                return data
+            except Exception as e:
+                error_context = str(e)
+
+        return {
+            "adr_document": "# ADR 001: Multi-Agent Architecture\n\n## Status\nAccepted",
+            "onboarding_guide": "# Developer Guide\n\nRun python main.py",
+            "system_spec": "Python multi-agent architecture system."
+        }
 
     def answer_architecture_question(self, question: str, report_context: Optional[Dict[str, Any]] = None) -> str:
-        """Interactive Chat subagent for answering developer questions about the architecture."""
+        """Interactive Chat subagent with Guardrail validation."""
         report = report_context or self.memory.get_latest_report(self.session_id) or {}
-        
         self.memory.add_message(self.session_id, "user", question)
 
         if not self.client:
@@ -230,25 +268,17 @@ Respond strictly in valid JSON format with keys "adr_document", "onboarding_guid
             return ans
 
         prompt = f"""
-You are the interactive Architecture Assistant for this codebase.
-Use the following analysis report to answer the user's question clearly and concisely:
-
+You are the interactive Architecture Assistant.
 Report Summary:
 - Total LOC: {report.get('inspection_summary', {}).get('total_loc')}
 - Languages: {json.dumps(report.get('inspection_summary', {}).get('languages'))}
 - API Routes: {json.dumps(report.get('api_routes'))}
-- System Spec: {report.get('documentation', {}).get('system_spec')}
 
 User Question: {question}
-
-Provide a helpful, well-structured markdown answer.
 """
         try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt
-            )
-            ans = response.text
+            response = self.client.models.generate_content(model=self.fast_model, contents=prompt)
+            ans = self.guardrails.sanitize_output(response.text)
         except Exception as e:
             ans = f"Error generating answer: {str(e)}"
 
