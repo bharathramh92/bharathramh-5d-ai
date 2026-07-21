@@ -5,7 +5,6 @@ from typing import Optional, Dict, Any
 
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException, Request
@@ -14,7 +13,6 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-# Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent import MultiAgentCodeArchSystem
@@ -46,7 +44,7 @@ class ChatRequest(BaseModel):
 GLOBAL_TELEMETRY = TelemetryTracer()
 
 @app.get("/api/status")
-def status():
+async def status():
     api_key_set = bool(os.getenv("GEMINI_API_KEY"))
     return {
         "status": "online",
@@ -55,7 +53,7 @@ def status():
     }
 
 @app.post("/api/analyze")
-def analyze(req: AnalyzeRequest):
+async def analyze(req: AnalyzeRequest):
     target_dir = req.target_dir or str(Path(__file__).resolve().parent.parent)
     
     if not os.path.exists(target_dir):
@@ -64,41 +62,54 @@ def analyze(req: AnalyzeRequest):
     try:
         agent_system = MultiAgentCodeArchSystem(session_id=req.session_id or "default")
         agent_system.telemetry = GLOBAL_TELEMETRY
-        report = agent_system.run_full_analysis(target_dir)
+        report = await agent_system.run_full_analysis_async(target_dir)
         return JSONResponse(content=report)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-def chat(req: ChatRequest):
+async def chat(req: ChatRequest):
     try:
         agent_system = MultiAgentCodeArchSystem(session_id=req.session_id or "default")
         agent_system.telemetry = GLOBAL_TELEMETRY
-        answer = agent_system.answer_architecture_question(req.question, req.report_context)
+        answer = await agent_system.answer_architecture_question_async(req.question, req.report_context)
         return {"answer": answer}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/telemetry")
-def get_telemetry():
+async def get_telemetry():
     return GLOBAL_TELEMETRY.get_trace_summary()
 
 @app.get("/api/memory")
-def get_memory(session_id: str = "default"):
+async def get_memory(session_id: str = "default"):
     agent_system = MultiAgentCodeArchSystem(session_id=session_id)
+    history = await agent_system.memory.get_history_async(session_id)
     return {
         "session_id": session_id,
-        "history": agent_system.memory.get_history(session_id),
+        "history": history,
         "latest_report": agent_system.memory.get_latest_report(session_id)
     }
 
-# Mount static directory for frontend UI
+@app.get("/api/approvals")
+async def get_pending_approvals():
+    agent_system = MultiAgentCodeArchSystem()
+    return {"pending_approvals": agent_system.hitl_hook.pending_approvals}
+
+@app.post("/api/approve/{action_id}")
+async def approve_action(action_id: str):
+    agent_system = MultiAgentCodeArchSystem()
+    approved = agent_system.hitl_hook.approve_action(action_id)
+    if not approved:
+        raise HTTPException(status_code=404, detail="Action ID not found for approval")
+    return {"status": "APPROVED", "action_id": action_id}
+
 static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 @app.get("/", response_class=HTMLResponse)
-def root():
+async def root():
     index_path = static_dir / "index.html"
     if index_path.exists():
         with open(index_path, "r", encoding="utf-8") as f:
