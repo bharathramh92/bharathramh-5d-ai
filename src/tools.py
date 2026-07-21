@@ -221,12 +221,14 @@ def detect_api_routes(root_dir: str) -> List[Dict[str, str]]:
                     for pattern, framework in route_patterns:
                         matches = re.findall(pattern, content, re.IGNORECASE)
                         for method, endpoint in matches:
-                            routes.append({
+                            route_entry = {
                                 "method": method.upper(),
                                 "endpoint": endpoint,
                                 "file": os.path.relpath(file_path, root_path),
                                 "framework": framework
-                            })
+                            }
+                            if route_entry not in routes:
+                                routes.append(route_entry)
                 except Exception:
                     continue
 

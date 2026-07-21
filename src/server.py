@@ -18,6 +18,7 @@ from pydantic import BaseModel
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent import MultiAgentCodeArchSystem
+from src.telemetry import TelemetryTracer
 
 app = FastAPI(
     title="ArchAgent - Codebase & Technical Architecture Multi-Agent AI System",
@@ -42,6 +43,8 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = "default"
     report_context: Optional[Dict[str, Any]] = None
 
+GLOBAL_TELEMETRY = TelemetryTracer()
+
 @app.get("/api/status")
 def status():
     api_key_set = bool(os.getenv("GEMINI_API_KEY"))
@@ -60,6 +63,7 @@ def analyze(req: AnalyzeRequest):
 
     try:
         agent_system = MultiAgentCodeArchSystem(session_id=req.session_id or "default")
+        agent_system.telemetry = GLOBAL_TELEMETRY
         report = agent_system.run_full_analysis(target_dir)
         return JSONResponse(content=report)
     except Exception as e:
@@ -69,6 +73,7 @@ def analyze(req: AnalyzeRequest):
 def chat(req: ChatRequest):
     try:
         agent_system = MultiAgentCodeArchSystem(session_id=req.session_id or "default")
+        agent_system.telemetry = GLOBAL_TELEMETRY
         answer = agent_system.answer_architecture_question(req.question, req.report_context)
         return {"answer": answer}
     except Exception as e:
@@ -76,8 +81,7 @@ def chat(req: ChatRequest):
 
 @app.get("/api/telemetry")
 def get_telemetry():
-    agent_system = MultiAgentCodeArchSystem()
-    return agent_system.telemetry.get_trace_summary()
+    return GLOBAL_TELEMETRY.get_trace_summary()
 
 @app.get("/api/memory")
 def get_memory(session_id: str = "default"):
