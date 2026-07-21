@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArchAgent - Autonomous Codebase & Technical Architecture AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Marked & Mermaid CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="navbar">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">Arch<span class="highlight">Agent</span></span>
+                <span class="badge">Enterprise Multi-Agent AI</span>
+            </div>
+            <div class="status-indicator" id="api-status">
+                <span class="dot pulse"></span> API System Online
+            </div>
+        </header>
+
+        <!-- Main Banner / Assignment Hero -->
+        <section class="hero-card">
+            <div class="hero-content">
+                <h1>Autonomous Codebase & Architecture Synthesis</h1>
+                <p>Formulate, analyze, and document complex software systems using multi-agent AI collaboration. Generates live Mermaid diagrams, ADRs, and security audits in seconds.</p>
+            </div>
+            <div class="input-panel">
+                <div class="input-group">
+                    <label for="repo-path">Repository Path:</label>
+                    <input type="text" id="repo-path" placeholder="Path to local codebase (e.g. /Users/username/project)" value="">
+                </div>
+                <button id="analyze-btn" class="btn primary-btn">
+                    <span id="btn-text">🚀 Run Multi-Agent Analysis</span>
+                    <span id="btn-spinner" class="spinner hidden"></span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Subagent Activity Pipeline Tracker -->
+        <section id="pipeline-tracker" class="pipeline-card hidden">
+            <h3>🤖 Multi-Agent Execution Pipeline</h3>
+            <div class="agent-steps">
+                <div class="step-badge active" id="agent-scanner">
+                    <span class="step-num">1</span>
+                    <span>Static Code Inspection Agent</span>
+                </div>
+                <div class="step-badge" id="agent-modeler">
+                    <span class="step-num">2</span>
+                    <span>Architecture Modeler (Mermaid)</span>
+                </div>
+                <div class="step-badge" id="agent-auditor">
+                    <span class="step-num">3</span>
+                    <span>Security & Audit Agent</span>
+                </div>
+                <div class="step-badge" id="agent-docgen">
+                    <span class="step-num">4</span>
+                    <span>Doc & ADR Generator</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Results Dashboard -->
+        <main id="dashboard" class="dashboard-panel hidden">
+            <!-- Navigation Tabs -->
+            <div class="tab-bar">
+                <button class="tab-btn active" data-tab="tab-overview">📊 Architecture Metrics</button>
+                <button class="tab-btn" data-tab="tab-diagrams">📐 Mermaid Diagrams</button>
+                <button class="tab-btn" data-tab="tab-adr">📜 ADR & Specs</button>
+                <button class="tab-btn" data-tab="tab-security">🛡️ Security Audit</button>
+                <button class="tab-btn" data-tab="tab-onboarding">🚀 Developer Guide</button>
+                <button class="tab-btn" data-tab="tab-chat">💬 Architecture Chat</button>
+            </div>
+
+            <!-- Tab Contents -->
+            <div class="tab-viewport">
+                <!-- Tab 1: Overview -->
+                <div id="tab-overview" class="tab-content active">
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-label">Total Lines of Code</span>
+                            <span class="metric-value" id="val-loc">0</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Total Files</span>
+                            <span class="metric-value" id="val-files">0</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">API Endpoints</span>
+                            <span class="metric-value" id="val-routes">0</span>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Security Score</span>
+                            <span class="metric-value green" id="val-security">Good</span>
+                        </div>
+                    </div>
+
+                    <div class="details-grid">
+                        <div class="glass-box">
+                            <h4>Language Breakdown</h4>
+                            <div id="lang-list" class="tag-cloud"></div>
+                        </div>
+                        <div class="glass-box">
+                            <h4>Discovered External Libraries</h4>
+                            <div id="dep-list" class="tag-cloud"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Mermaid Diagrams -->
+                <div id="tab-diagrams" class="tab-content">
+                    <div class="diagram-section">
+                        <h4>System Component Architecture Diagram</h4>
+                        <div class="mermaid-container" id="mermaid-component"></div>
+                    </div>
+                    <div class="diagram-section">
+                        <h4>Sequence & Request Execution Flow</h4>
+                        <div class="mermaid-container" id="mermaid-sequence"></div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: ADR & Specs -->
+                <div id="tab-adr" class="tab-content">
+                    <div class="markdown-body" id="md-adr"></div>
+                </div>
+
+                <!-- Tab 4: Security Audit -->
+                <div id="tab-security" class="tab-content">
+                    <div class="markdown-body" id="md-security"></div>
+                </div>
+
+                <!-- Tab 5: Developer Onboarding -->
+                <div id="tab-onboarding" class="tab-content">
+                    <div class="markdown-body" id="md-onboarding"></div>
+                </div>
+
+                <!-- Tab 6: Architecture Chat -->
+                <div id="tab-chat" class="tab-content">
+                    <div class="chat-container">
+                        <div class="chat-history" id="chat-messages">
+                            <div class="chat-bubble bot">
+                                💡 Hello! I am your <strong>ArchAgent Assistant</strong>. Ask me anything about the codebase modules, design patterns, security risks, or APIs!
+                            </div>
+                        </div>
+                        <div class="chat-input-bar">
+                            <input type="text" id="chat-input" placeholder="Ask a question about the codebase architecture...">
+                            <button id="send-chat-btn" class="btn primary-btn">Send</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
