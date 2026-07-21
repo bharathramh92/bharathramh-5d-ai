@@ -26,8 +26,8 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          pytest tests/
+          PYTHONPATH=. python -m pytest tests/
 
       - name: Run CLI Self-Evaluation Benchmark
         run: |
-          python main.py --eval
+          PYTHONPATH=. python main.py --eval
